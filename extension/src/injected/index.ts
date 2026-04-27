@@ -5,6 +5,14 @@ import { extractToolCallsFromText } from '../shared/toolcall';
   const originalFetch = window.fetch;
   const originalXhrSend = XMLHttpRequest.prototype.send;
 
+  const TRACKING_HOSTS = [
+    'googletagmanager.com',
+    'google-analytics.com',
+    'doubleclick.net',
+    'googlesyndication.com',
+    'googleadservices.com',
+  ];
+
   // Global dedup: keyed by conversation ID extracted from URL
   const processedByConv = new Map<string, Set<string>>();
   const xhrStateByInstance = new WeakMap<XMLHttpRequest, { buffer: string; lastLength: number; processed: Set<string> }>();
@@ -20,6 +28,26 @@ import { extractToolCallsFromText } from '../shared/toolcall';
     const id = getConvId();
     if (!processedByConv.has(id)) processedByConv.set(id, new Set());
     return processedByConv.get(id)!;
+  }
+
+  function resolveRequestUrl(input: RequestInfo | URL): string | null {
+    try {
+      if (typeof input === 'string') return new URL(input, location.href).href;
+      if (input instanceof URL) return input.href;
+      if (input instanceof Request) return input.url;
+    } catch {
+      // Ignore URL parsing errors and keep page behavior unchanged.
+    }
+    return null;
+  }
+
+  function isTrackingRequest(url: string): boolean {
+    try {
+      const host = new URL(url, location.href).hostname.toLowerCase();
+      return TRACKING_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+    } catch {
+      return false;
+    }
   }
 
   function normalizeToolText(raw: string): string {
@@ -103,8 +131,15 @@ import { extractToolCallsFromText } from '../shared/toolcall';
     });
   }
 
-  window.fetch = function(...args) {
-    return originalFetch.apply(this, args).then(response => {
+  window.fetch = function(input: RequestInfo | URL, init?: RequestInit) {
+    const requestUrl = resolveRequestUrl(input);
+    if (requestUrl && isTrackingRequest(requestUrl)) {
+      // Gemini emits analytics beacons that are blocked by CSP. Skip them so the
+      // injected hook does not surface unrelated console noise.
+      return Promise.resolve(new Response('', { status: 204, statusText: 'No Content' }));
+    }
+
+    return originalFetch.call(this, input, init).then(response => {
       try {
         // Observe a cloned stream to avoid altering the page's original response lifecycle.
         const cloned = response.clone();
