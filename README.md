@@ -13,7 +13,7 @@
 ## 工作原理
 
 ```
-AI 网页 → 输出 <tool> 指令 → Chrome 扩展拦截 → 本地 Go 服务执行 → 结果返回 AI
+AI 网页 → 输出 YAML `tool_call` → Chrome 扩展拦截 → 本地 Go 服务执行 → 结果返回 AI
 ```
 
 ## 快速安装
@@ -40,14 +40,30 @@ openlink
 
 服务默认监听 `http://127.0.0.1:39527`，启动后会输出认证 URL。
 
-### 第二步：安装 Chrome 扩展
+### 第二步：安装浏览器扩展
 
 > Chrome Web Store 版本即将上线，目前请手动安装。
 
 1. 下载最新 [Release](https://github.com/afumu/openlink/releases/latest) 中的 `extension.zip` 并解压
-2. 打开 Chrome，访问 `chrome://extensions/`
-3. 开启右上角「开发者模式」
-4. 点击「加载已解压的扩展程序」，选择解压后的目录
+2. 如果你使用 Chrome：
+
+- 打开 `chrome://extensions/`
+- 开启右上角「开发者模式」
+- 点击「加载已解压的扩展程序」，选择解压后的目录
+
+3. 如果你使用 Firefox：
+
+- 打开 `about:debugging#/runtime/this-firefox`
+- 点击「临时载入附加组件」
+- 选择解压目录中的 `manifest.json`
+
+> 从源码打包 Firefox `.xpi`：
+>
+> ```bash
+> cd extension
+> npm install
+> npm run package:firefox
+> ```
 
 ### 第三步：连接扩展与服务
 
@@ -71,39 +87,40 @@ openlink
 
 ## 支持的 AI 平台
 
-| 平台 | 状态 | 备注 |
-|------|------|------|
-| Google AI Studio | ✅ | 推荐，原生支持系统提示词 |
-| Google Gemini | ✅ | |
+| 平台             | 状态 | 备注                     |
+| ---------------- | ---- | ------------------------ |
+| Google AI Studio | ✅   | 推荐，原生支持系统提示词 |
+| Google Gemini    | ✅   |                          |
 
 ---
 
 ## 可用工具
 
-| 工具 | 说明 |
-|------|------|
-| `exec_cmd` | 执行 Shell 命令 |
-| `list_dir` | 列出目录内容 |
-| `read_file` | 读取文件内容（支持分页） |
+| 工具         | 说明                          |
+| ------------ | ----------------------------- |
+| `exec_cmd`   | 执行 Shell 命令               |
+| `list_dir`   | 列出目录内容                  |
+| `read_file`  | 读取文件内容（支持分页）      |
 | `write_file` | 写入文件内容（支持追加/覆盖） |
-| `glob` | 按文件名模式搜索文件 |
-| `grep` | 正则搜索文件内容 |
-| `edit` | 精确替换文件中的字符串 |
-| `web_fetch` | 获取网页内容 |
-| `question` | 向用户提问并等待回答 |
-| `skill` | 加载自定义 Skill |
-| `todo_write` | 写入待办事项 |
+| `glob`       | 按文件名模式搜索文件          |
+| `grep`       | 正则搜索文件内容              |
+| `edit`       | 精确替换文件中的字符串        |
+| `web_fetch`  | 获取网页内容                  |
+| `question`   | 向用户提问并等待回答          |
+| `skill`      | 加载自定义 Skill              |
+| `todo_write` | 写入待办事项                  |
 
 ## 输入框快捷补全
 
 在任意支持的 AI 平台输入框中，OpenLink 提供两种快捷触发：
 
-| 触发方式 | 效果 |
-|----------|------|
-| 输入 `/` | 弹出当前项目所有 Skills 列表，选择后自动插入工具调用 XML |
-| 输入 `@` | 弹出工作目录文件路径补全列表，选择后插入文件路径 |
+| 触发方式 | 效果                                                     |
+| -------- | -------------------------------------------------------- |
+| 输入 `/` | 弹出当前项目所有 Skills 列表，选择后自动插入工具调用 YAML |
+| 输入 `@` | 弹出工作目录文件路径补全列表，选择后插入文件路径         |
 
 **操作方式：**
+
 - ↑ / ↓ 键盘导航
 - Enter 确认选择
 - Escape 或点击外部关闭
@@ -147,15 +164,20 @@ description: 项目部署流程
 ---
 
 ## 部署步骤
+
 ...
 ```
 
 AI 通过 `skill` 工具加载：
 
 ```
-<tool name="skill">
-  <parameter name="skill">deploy</parameter>
-</tool>
+```yaml
+tool_call:
+  name: skill
+  call_id: a3f9k
+  args:
+    skill: deploy
+```
 ```
 
 ---
@@ -194,10 +216,10 @@ openlink [选项]
 ---
 
 ## 群交流
+
 加微信：afumudev
 
 备注：openlink
-
 
 ## 致谢
 

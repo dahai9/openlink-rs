@@ -29,8 +29,10 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+.codex
 
 # Extension build artifacts
 extension/*.crx
 extension/*.pem
+extension/*.xpi
 extension/dist/

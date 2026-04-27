@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"io/fs"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -135,9 +136,9 @@ func (s *Server) handleListTools(c *gin.Context) {
 func (s *Server) handleExec(c *gin.Context) {
 	log.Println("[OpenLink] 收到 /exec 请求")
 
-	var req types.ToolRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Printf("[OpenLink] ❌ JSON 解析失败: %v\n", err)
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		log.Printf("[OpenLink] ❌ 请求体读取失败: %v\n", err)
 		c.JSON(http.StatusBadRequest, types.ToolResponse{
 			Status: "error",
 			Error:  err.Error(),
@@ -145,7 +146,17 @@ func (s *Server) handleExec(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[OpenLink] 工具调用: name=%s, args=%+v\n", req.Name, req.Args)
+	req, err := types.ParseToolRequestPayload(body)
+	if err != nil {
+		log.Printf("[OpenLink] ❌ 工具请求解析失败: %v\n", err)
+		c.JSON(http.StatusBadRequest, types.ToolResponse{
+			Status: "error",
+			Error:  err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[OpenLink] 工具调用: name=%s, call_id=%s, args=%+v\n", req.Name, req.CallID, req.Args)
 
 	// 修复 AI 模型将换行符误写为 \t 的情况（仅对 edit 工具的字符串参数）
 	if req.Name == "edit" {
@@ -158,7 +169,7 @@ func (s *Server) handleExec(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.config.Timeout)*time.Second)
 	defer cancel()
-	resp := s.executor.Execute(ctx, &req)
+	resp := s.executor.Execute(ctx, req)
 
 	log.Printf("[OpenLink] 执行结果: status=%s, output长度=%d\n", resp.Status, len(resp.Output))
 	if resp.Error != "" {

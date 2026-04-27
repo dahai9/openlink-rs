@@ -89,6 +89,25 @@ func TestHandleExec(t *testing.T) {
 		}
 	})
 
+	t.Run("yaml raw body succeeds", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"raw": "tool_call:\n  name: exec_cmd\n  call_id: a1b2c\n  args:\n    command: echo hi",
+		})
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/exec", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer testtoken")
+		s.router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		var resp types.ToolResponse
+		json.NewDecoder(w.Body).Decode(&resp)
+		if resp.Status != "success" {
+			t.Errorf("expected success, got %s: %s", resp.Status, resp.Error)
+		}
+	})
+
 	t.Run("invalid json returns 400", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/exec", bytes.NewReader([]byte("bad json")))

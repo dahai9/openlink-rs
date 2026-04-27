@@ -4,8 +4,7 @@
   "version": "1.0.0",
   "description": "OpenLink 代理 - 连接 AI 与本地环境",
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "scripts": ["background.js"]
   },
   "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": ["http://127.0.0.1/*"],
@@ -24,5 +23,10 @@
       "resources": ["injected.js"],
       "matches": ["*://*.gemini.google.com/*", "*://aistudio.google.com/*"]
     }
-  ]
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "openlink@afumu.dev"
+    }
+  }
 }

@@ -2,9 +2,9 @@
 
 ## 环境要求
 
-- Go 1.23+
-- Node.js 18+
-- Chrome 浏览器
+- Nix with flakes enabled（NixOS 推荐）
+- 或本机安装 Go 1.23+、Node.js 18+
+- Chrome 或 Firefox 浏览器
 
 ## 项目结构
 
@@ -17,7 +17,7 @@ openlink/
 │   ├── server/          # HTTP 服务
 │   └── types/           # 公共类型
 ├── prompts/             # 内置初始化提示词
-├── extension/           # Chrome 扩展（Vite + React）
+├── extension/           # 浏览器扩展（Vite + React）
 │   ├── src/
 │   │   ├── content/     # 内容脚本（工具调用拦截）
 │   │   ├── popup/       # 扩展弹窗 UI
@@ -29,6 +29,14 @@ openlink/
 ```
 
 ## 本地开发
+
+### 使用 Nix 开发环境
+
+```bash
+nix develop
+```
+
+开发壳会提供 `go`、`node`、`npm`、`python3` 和 `zip`，并设置 `GOTOOLCHAIN=local`，避免 Go 自动下载额外 toolchain。
 
 ### 启动服务端
 
@@ -49,9 +57,20 @@ cd extension
 npm install
 npm run build      # 生产构建
 npm run dev        # 监听模式（改动自动重新构建）
+npm run build:firefox
+npm run package:firefox
 ```
 
-构建产物在 `extension/dist/`，在 Chrome 中加载该目录即可。
+构建产物在 `extension/dist/`：
+
+- `npm run build` 或 `npm run build:chrome` 生成 Chrome 版本
+- `npm run build:firefox` 生成 Firefox 版本（Firefox 专用 manifest）
+- `npm run package:firefox` 额外生成 `extension/openlink-firefox.xpi`
+
+浏览器加载方式：
+
+- Chrome: `chrome://extensions/` -> 加载已解压的扩展程序 -> `extension/dist/`
+- Firefox: `about:debugging#/runtime/this-firefox` -> 临时载入附加组件 -> `extension/dist/manifest.json`
 
 ### 运行测试
 
@@ -69,6 +88,7 @@ git push origin v1.0.0
 ```
 
 发布产物包含：
+
 - 各平台二进制（linux/darwin/windows × amd64/arm64）
 - 扩展压缩包 `extension.zip`
 
@@ -77,15 +97,15 @@ git push origin v1.0.0
 在 `extension/src/content/index.ts` 的 `getSiteConfig()` 中添加新站点配置：
 
 ```typescript
-if (h.includes('example.com'))
+if (h.includes("example.com"))
   return {
-    editor: 'textarea#input',          // 输入框选择器
-    sendBtn: 'button[type="submit"]',  // 发送按钮选择器
+    editor: "textarea#input", // 输入框选择器
+    sendBtn: 'button[type="submit"]', // 发送按钮选择器
     stopBtn: null,
-    fillMethod: 'value',               // paste | execCommand | value | prosemirror
-    useObserver: true,                 // 是否用 DOM Observer 检测工具调用
-    responseSelector: '.response',    // 响应容器选择器（useObserver=true 时必填）
-    supported: true,                   // 显示初始化按钮
+    fillMethod: "value", // paste | execCommand | value | prosemirror
+    useObserver: true, // 是否用 DOM Observer 检测工具调用
+    responseSelector: ".response", // 响应容器选择器（useObserver=true 时必填）
+    supported: true, // 显示初始化按钮
   };
 ```
 

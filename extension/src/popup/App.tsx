@@ -9,11 +9,12 @@ export default function App() {
   const [info, setInfo] = useState('')
   const [autoSend, setAutoSend] = useState(true)
   const [autoExecute, setAutoExecute] = useState(false)
+  const [debugMode, setDebugMode] = useState(false)
   const [delayMin, setDelayMin] = useState(1)
   const [delayMax, setDelayMax] = useState(4)
 
   useEffect(() => {
-    chrome.storage.local.get(['authToken', 'apiUrl', 'autoSend', 'autoExecute', 'delayMin', 'delayMax'], (result) => {
+    chrome.storage.local.get(['authToken', 'apiUrl', 'autoSend', 'autoExecute', 'debugMode', 'delayMin', 'delayMax'], (result) => {
       if (result.authToken && result.apiUrl) {
         setSavedToken(result.authToken)
         setApiUrl(result.apiUrl)
@@ -24,6 +25,7 @@ export default function App() {
       }
       if (result.autoSend !== undefined) setAutoSend(result.autoSend)
       if (result.autoExecute !== undefined) setAutoExecute(result.autoExecute)
+      if (result.debugMode !== undefined) setDebugMode(result.debugMode)
       if (result.delayMin !== undefined) setDelayMin(result.delayMin)
       if (result.delayMax !== undefined) setDelayMax(result.delayMax)
     })
@@ -71,6 +73,11 @@ export default function App() {
   const handleAutoExecuteChange = (val: boolean) => {
     setAutoExecute(val)
     chrome.storage.local.set({ autoExecute: val })
+  }
+
+  const handleDebugModeChange = (val: boolean) => {
+    setDebugMode(val)
+    chrome.storage.local.set({ debugMode: val })
   }
 
   const handleDelayChange = (min: number, max: number) => {
@@ -147,6 +154,15 @@ export default function App() {
             className={`relative inline-flex w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${autoSend ? 'bg-blue-600' : 'bg-gray-600'}`}
           >
             <span className={`inline-block w-5 h-5 mt-0.5 bg-white rounded-full shadow transition-transform duration-200 ${autoSend ? 'translate-x-5' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-300">调试日志</span>
+          <button
+            onClick={() => handleDebugModeChange(!debugMode)}
+            className={`relative inline-flex w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${debugMode ? 'bg-amber-500' : 'bg-gray-600'}`}
+          >
+            <span className={`inline-block w-5 h-5 mt-0.5 bg-white rounded-full shadow transition-transform duration-200 ${debugMode ? 'translate-x-5' : 'translate-x-0.5'}`} />
           </button>
         </div>
 
