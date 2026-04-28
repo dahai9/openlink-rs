@@ -36,7 +36,7 @@ function parseInlineValue(raw: string): any {
   if (value === 'true') return true;
   if (value === 'false') return false;
   if (/^-?\d+(?:\.\d+)?$/.test(value)) return Number(value);
-  if ((value.startsWith('"') && value.endsWith('"'))) {
+  if (value.startsWith('"') && value.endsWith('"')) {
     try { return JSON.parse(value); } catch { return value.slice(1, -1); }
   }
   if (value.startsWith("'") && value.endsWith("'")) {
@@ -69,12 +69,13 @@ function parseBlockScalar(lines: string[], index: number, parentIndent: number):
 
   if (collected.length === 0) return { value: '', nextIndex: index };
   const strip = Number.isFinite(minIndent) ? minIndent : parentIndent + 2;
-  const value = collected.map((line) => {
-    if (!line) return '';
-    const indent = countIndent(line);
-    return line.slice(Math.min(strip, indent));
-  }).join('\n');
-  return { value, nextIndex: i };
+  return {
+    value: collected.map((line) => {
+      if (!line) return '';
+      return line.slice(Math.min(strip, countIndent(line)));
+    }).join('\n'),
+    nextIndex: i,
+  };
 }
 
 function parseMapping(lines: string[], index: number, indent: number): { value: Record<string, any>; nextIndex: number } {
@@ -89,9 +90,9 @@ function parseMapping(lines: string[], index: number, indent: number): { value: 
     }
     const lineIndent = countIndent(line);
     if (lineIndent < indent) break;
+
     const trimmed = line.trimStart();
-    if (trimmed.startsWith('- ')) break;
-    if (trimmed.startsWith('#')) {
+    if (trimmed.startsWith('- ') || trimmed.startsWith('#')) {
       i++;
       continue;
     }
@@ -150,6 +151,7 @@ function parseList(lines: string[], index: number, indent: number): { value: any
     }
     const lineIndent = countIndent(line);
     if (lineIndent < indent) break;
+
     const trimmed = line.trimStart();
     if (!trimmed.startsWith('- ')) break;
 
@@ -228,13 +230,7 @@ function normalizeToolCallObject(candidate: any, raw: string, format: ToolFormat
     ? argsSource
     : {};
 
-  return {
-    name,
-    callId,
-    args,
-    raw,
-    format,
-  };
+  return { name, callId, args, raw, format };
 }
 
 function parseYamlToolCall(raw: string): CapturedToolCall | null {
@@ -252,15 +248,13 @@ function parseYamlToolCall(raw: string): CapturedToolCall | null {
 function parseXmlToolCall(raw: string): CapturedToolCall | null {
   const nameMatch = raw.match(/^<tool\s+name="([^"]+)"(?:\s+call_id="([^"]+)")?/);
   if (!nameMatch) return null;
-  const name = nameMatch[1];
-  const callId = nameMatch[2] || null;
   const args: Record<string, string> = {};
   const paramRe = /<parameter\s+name="([^"]+)">([\s\S]*?)<\/parameter>/g;
   let m;
   while ((m = paramRe.exec(raw)) !== null) args[m[1]] = m[2];
   return {
-    name,
-    callId,
+    name: nameMatch[1],
+    callId: nameMatch[2] || null,
     args,
     raw,
     format: 'xml',
@@ -272,8 +266,7 @@ function tryParseToolJSON(raw: string): CapturedToolCall | null {
   if (!normalized) return null;
 
   try {
-    const parsed = JSON.parse(normalized);
-    return normalizeToolCallObject(parsed, raw, 'json');
+    return normalizeToolCallObject(JSON.parse(normalized), raw, 'json');
   } catch {}
 
   try {
@@ -311,8 +304,7 @@ function tryParseToolJSON(raw: string): CapturedToolCall | null {
       }
       result += ch;
     }
-    const parsed = JSON.parse(result);
-    return normalizeToolCallObject(parsed, raw, 'json');
+    return normalizeToolCallObject(JSON.parse(result), raw, 'json');
   } catch {}
 
   return null;
@@ -334,38 +326,83 @@ function parseToolCallSegment(raw: string): CapturedToolCall | null {
   return null;
 }
 
+function isInsideSpan(index: number, spans: Array<{ start: number; end: number }>): boolean {
+  return spans.some((span) => index >= span.start && index < span.end);
+}
+
+function toolCallKey(call: CapturedToolCall): string {
+  if (call.callId) return `${call.name}:${call.callId}`;
+  return `${call.format}:${stripMarkdownFence(call.raw).replace(/\s+/g, ' ').trim()}`;
+}
+
+function findYamlToolCallSegments(text: string, ignoredSpans: Array<{ start: number; end: number }>): Array<{ index: number; raw: string }> {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const offsets: number[] = [];
+  let cursor = 0;
+  for (const line of lines) {
+    offsets.push(cursor);
+    cursor += line.length + 1;
+  }
+
+  const starts: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const offset = offsets[i] ?? 0;
+    if (!isInsideSpan(offset, ignoredSpans) && /^\s*tool_call\s*:\s*$/.test(lines[i])) starts.push(i);
+  }
+
+  return starts.map((startLine, position) => {
+    const endLine = starts[position + 1] ?? lines.length;
+    return {
+      index: offsets[startLine] ?? 0,
+      raw: lines.slice(startLine, endLine).join('\n').trim(),
+    };
+  }).filter((segment) => segment.raw.length > 0);
+}
+
 export function extractToolCallsFromText(text: string): CapturedToolCall[] {
   const normalized = normalizeToolText(text);
   const matches: Array<{ index: number; call: CapturedToolCall }> = [];
   const seen = new Set<string>();
+  const fencedSpans: Array<{ start: number; end: number }> = [];
 
   const addCall = (call: CapturedToolCall | null, index: number) => {
     if (!call) return;
-    if (seen.has(call.raw)) return;
-    seen.add(call.raw);
+    const key = toolCallKey(call);
+    if (seen.has(key)) return;
+    seen.add(key);
     matches.push({ index, call });
   };
 
   const fenceRe = /```(?:ya?ml)?[^\n]*\n([\s\S]*?)```/gi;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = fenceRe.exec(normalized)) !== null) {
-    const call = parseToolCallSegment(match[1]);
-    if (call) {
-      call.raw = match[0];
-      addCall(call, match.index ?? 0);
+    const fenceStart = match.index ?? 0;
+    fencedSpans.push({ start: fenceStart, end: fenceStart + match[0].length });
+
+    const yamlSegments = findYamlToolCallSegments(match[1], []);
+    if (yamlSegments.length > 0) {
+      for (const segment of yamlSegments) {
+        addCall(parseToolCallSegment(segment.raw), fenceStart + segment.index);
+      }
+    } else {
+      const call = parseToolCallSegment(match[1]);
+      if (call) {
+        call.raw = match[0];
+        addCall(call, fenceStart);
+      }
     }
   }
 
   const xmlRe = /<tool(?:\s[^>]*)?>[\s\S]*?<\/tool(?:_call)?>/gi;
   while ((match = xmlRe.exec(normalized)) !== null) {
-    const call = parseToolCallSegment(match[0]);
-    if (call) addCall(call, match.index ?? 0);
+    addCall(parseToolCallSegment(match[0]), match.index ?? 0);
   }
 
-  if (!matches.length) {
-    const call = parseToolCallSegment(normalized);
-    if (call) addCall(call, 0);
+  for (const segment of findYamlToolCallSegments(normalized, fencedSpans)) {
+    addCall(parseToolCallSegment(segment.raw), segment.index);
   }
+
+  if (!matches.length) addCall(parseToolCallSegment(normalized), 0);
 
   matches.sort((a, b) => a.index - b.index);
   return matches.map(({ call }) => call);

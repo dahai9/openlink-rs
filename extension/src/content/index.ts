@@ -19,48 +19,26 @@ interface SiteConfig {
   fillMethod: FillMethod;
   useObserver: boolean;
   responseSelector?: string;
-  enableInjectedFallback?: boolean;
 }
+
+type OpenLinkToolCall = {
+  name: string;
+  callId?: string | null;
+  args?: Record<string, any>;
+  raw?: string;
+  __openlinkRoundId?: string;
+  __openlinkRoundIndex?: number;
+  __openlinkRoundTotal?: number;
+};
+
+let roundCounter = 0;
 
 function getSiteConfig(): SiteConfig {
   const h = location.hostname;
   if (h.includes('gemini.google.com'))
-    return {
-      editor: 'div.ql-editor[contenteditable="true"]',
-      sendBtn: 'button.send-button[aria-label*="发送"], button.send-button[aria-label*="Send"]',
-      stopBtn: null,
-      fillMethod: 'execCommand',
-      useObserver: true,
-      responseSelector: 'model-response, .model-response-text, message-content',
-      enableInjectedFallback: true,
-    };
+    return { editor: 'div.ql-editor[contenteditable="true"]', sendBtn: 'button.send-button[aria-label*="发送"], button.send-button[aria-label*="Send"]', stopBtn: null, fillMethod: 'execCommand', useObserver: true, responseSelector: 'model-response, .model-response-text, message-content' };
   // Default: AI Studio
   return { editor: 'textarea[placeholder*="Start typing a prompt"]', sendBtn: 'button.ctrl-enter-submits.ms-button-primary[type="submit"], button[aria-label*="Run"]', stopBtn: null, fillMethod: 'value', useObserver: true, responseSelector: 'ms-chat-turn' };
-}
-
-const detectedToolKeys = new Set<string>();
-let autoExecute = false;
-let debugMode = false;
-let execQueue: Promise<void> = Promise.resolve();
-
-function debugLog(...args: any[]) {
-  if (debugMode) console.log('[OpenLink][debug]', ...args);
-}
-
-function queueToolExecution(toolCall: any) {
-  execQueue = execQueue.then(() => executeToolCall(toolCall));
-}
-
-function makeCallId(): string {
-  return Math.random().toString(36).slice(2, 8);
-}
-
-function injectFetchHook() {
-  if (document.getElementById('openlink-injected-script')) return;
-  const script = document.createElement('script');
-  script.id = 'openlink-injected-script';
-  script.src = chrome.runtime.getURL('injected.js');
-  (document.head || document.documentElement).appendChild(script);
 }
 
 if (!(window as any).__OPENLINK_LOADED__) {
@@ -68,37 +46,20 @@ if (!(window as any).__OPENLINK_LOADED__) {
 
   const cfg = getSiteConfig();
 
-  chrome.storage.local.get(['autoExecute', 'debugMode']).then(r => {
-    autoExecute = !!r.autoExecute;
-    debugMode = !!r.debugMode;
-    debugLog('settings loaded', { autoExecute, debugMode });
-  });
-  chrome.storage.onChanged.addListener((changes) => {
-    if ('autoExecute' in changes) autoExecute = !!changes.autoExecute.newValue;
-    if ('debugMode' in changes) debugMode = !!changes.debugMode.newValue;
-  });
-
-  if (cfg.useObserver && cfg.responseSelector) {
+  if (!cfg.useObserver) {
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL('injected.js');
+    (document.head || document.documentElement).appendChild(script);
+  } else if (cfg.responseSelector) {
     const sel = cfg.responseSelector;
     if (document.body) startDOMObserver(sel);
     else document.addEventListener('DOMContentLoaded', () => startDOMObserver(sel));
   }
 
-  if (!cfg.useObserver || cfg.enableInjectedFallback) {
-    if (document.body) injectFetchHook();
-    else document.addEventListener('DOMContentLoaded', injectFetchHook);
-  }
-
+  let execQueue = Promise.resolve();
   window.addEventListener('message', (event) => {
-    if (event.source !== window || !event.data) return;
     if (event.data.type === 'TOOL_CALL') {
-      const data = event.data.data;
-      const fromInjected = event.data.__openlinkSource === 'injected';
-      if (fromInjected && cfg.useObserver) {
-        handleInjectedToolCall(data, event.data.__openlinkRaw);
-        return;
-      }
-      queueToolExecution(data);
+      execQueue = execQueue.then(() => executeToolCall(event.data.data));
     }
   });
 
@@ -132,13 +93,6 @@ function getConversationId(): string {
   return m ? m[1] : '__default__';
 }
 
-function getToolKey(data: any, raw?: string): string {
-  const convId = getConversationId();
-  if (data?.callId && data?.name) return `${convId}:${data.name}:${data.callId}`;
-  if (typeof raw === 'string' && raw.length > 0) return `${convId}:raw:${hashStr(raw)}`;
-  return `${convId}:data:${hashStr(JSON.stringify(data ?? {}))}`;
-}
-
 function isExecuted(key: string): boolean {
   try {
     const store: Record<string, number> = JSON.parse(localStorage.getItem('openlink_executed') || '{}');
@@ -160,124 +114,60 @@ function markExecuted(key: string): void {
   } catch {}
 }
 
-async function executeToolCallRaw(toolCall: any): Promise<string> {
+function nextRoundId(): string {
+  roundCounter += 1;
+  return `round-${String(roundCounter).padStart(3, '0')}`;
+}
+
+function assignRoundMeta(calls: OpenLinkToolCall[]): OpenLinkToolCall[] {
+  if (calls.length <= 1) return calls;
+  const roundId = nextRoundId();
+  return calls.map((call, index) => ({
+    ...call,
+    __openlinkRoundId: roundId,
+    __openlinkRoundIndex: index + 1,
+    __openlinkRoundTotal: calls.length,
+  }));
+}
+
+function formatToolResultForModel(toolCall: OpenLinkToolCall, text: string): string {
+  const lines = ['```yaml', 'tool_result:'];
+  if (toolCall.__openlinkRoundId) lines.push(`  round: ${toolCall.__openlinkRoundId}`);
+  if (toolCall.__openlinkRoundIndex && toolCall.__openlinkRoundTotal) {
+    lines.push(`  index: ${toolCall.__openlinkRoundIndex}/${toolCall.__openlinkRoundTotal}`);
+  }
+  lines.push(`  name: ${toolCall.name}`);
+  if (toolCall.callId) lines.push(`  call_id: ${toolCall.callId}`);
+  lines.push('  output: |');
+  const body = text.length > 0 ? text : '[OpenLink] 空响应';
+  for (const line of body.split('\n')) {
+    lines.push(`    ${line}`);
+  }
+  lines.push('```');
+  return lines.join('\n');
+}
+
+function toExecPayload(toolCall: OpenLinkToolCall): Record<string, any> {
+  return {
+    name: toolCall.name,
+    callId: toolCall.callId ?? null,
+    args: toolCall.args ?? {},
+  };
+}
+
+async function executeToolCallRaw(toolCall: OpenLinkToolCall): Promise<string> {
   const { authToken, apiUrl } = await chrome.storage.local.get(['authToken', 'apiUrl']);
   if (!apiUrl) return '请先在插件中配置 API 地址';
   const headers: any = { 'Content-Type': 'application/json' };
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-  const response = await bgFetch(`${apiUrl}/exec`, { method: 'POST', headers, body: JSON.stringify(toolCall) });
+  const response = await bgFetch(`${apiUrl}/exec`, { method: 'POST', headers, body: JSON.stringify(toExecPayload(toolCall)) });
   if (response.status === 401) return '认证失败，请在插件中重新输入 Token';
   if (!response.ok) return `[OpenLink 错误] HTTP ${response.status}`;
   const result = JSON.parse(response.body);
   return result.output || result.error || '[OpenLink] 空响应';
 }
 
-function handleInjectedToolCall(data: any, raw?: string) {
-  const key = getToolKey(data, raw);
-  if (detectedToolKeys.has(key)) {
-    debugLog('skip duplicate tool from injected', key);
-    return;
-  }
-
-  detectedToolKeys.add(key);
-  debugLog('captured tool from injected', { key, data });
-
-  if (autoExecute && !isExecuted(key)) {
-    markExecuted(key);
-    queueToolExecution(data);
-    return;
-  }
-
-  renderDetachedToolCard(data, key);
-}
-
-function renderDetachedToolCard(data: any, key: string) {
-  if (document.querySelector(`[data-openlink-floating-key="${key}"]`)) return;
-
-  let stack = document.getElementById('openlink-floating-tools');
-  if (!stack) {
-    stack = document.createElement('div');
-    stack.id = 'openlink-floating-tools';
-    stack.style.cssText = 'position:fixed;right:20px;bottom:120px;z-index:2147483647;display:flex;flex-direction:column;gap:8px;max-width:420px';
-    document.body.appendChild(stack);
-  }
-
-  const args = data.args && typeof data.args === 'object' ? data.args : {};
-  const rawText = typeof data.raw === 'string' ? data.raw : '';
-  const card = document.createElement('div');
-  card.setAttribute('data-openlink-floating-key', key);
-  card.style.cssText = 'border:1px solid #444;border-radius:8px;padding:12px;background:#1e1e2e;color:#cdd6f4;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,0.4)';
-
-  const header = document.createElement('div');
-  header.style.cssText = 'font-weight:bold;margin-bottom:8px';
-  header.innerHTML = `🔧 ${data.name} <span style="color:#888;font-size:11px">#${data.callId || ''}</span>`;
-  card.appendChild(header);
-
-  const argsBox = document.createElement('div');
-  argsBox.style.cssText = 'margin:8px 0;background:#181825;border-radius:6px;padding:8px;max-height:120px;overflow-y:auto';
-  if (Object.keys(args).length > 0) {
-    for (const [k, v] of Object.entries(args)) {
-      const row = document.createElement('div');
-      row.style.cssText = 'margin-bottom:4px';
-      row.innerHTML = `<span style="color:#89b4fa;font-size:11px">${k}</span>`;
-      const val = document.createElement('div');
-      val.style.cssText = 'color:#cdd6f4;font-size:12px;font-family:monospace;white-space:pre-wrap';
-      val.textContent = typeof v === 'string' ? v : JSON.stringify(v);
-      row.appendChild(val);
-      argsBox.appendChild(row);
-    }
-  } else if (rawText) {
-    const rawBox = document.createElement('pre');
-    rawBox.style.cssText = 'margin:0;color:#cdd6f4;font-size:12px;font-family:monospace;white-space:pre-wrap';
-    rawBox.textContent = rawText;
-    argsBox.appendChild(rawBox);
-  }
-  card.appendChild(argsBox);
-
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;gap:8px';
-  const execBtn = document.createElement('button');
-  execBtn.textContent = '执行';
-  execBtn.style.cssText = 'padding:4px 12px;background:#1677ff;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px';
-  const skipBtn = document.createElement('button');
-  skipBtn.textContent = '忽略';
-  skipBtn.style.cssText = 'padding:4px 12px;background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:6px;cursor:pointer;font-size:12px';
-  btnRow.appendChild(execBtn);
-  btnRow.appendChild(skipBtn);
-  card.appendChild(btnRow);
-
-  execBtn.onclick = async () => {
-    execBtn.disabled = true;
-    execBtn.textContent = '执行中...';
-    markExecuted(key);
-    try {
-      const text = await executeToolCallRaw(data);
-      const resultBox = document.createElement('div');
-      resultBox.style.cssText = 'margin-top:10px;background:#181825;border-radius:6px;padding:8px;max-height:160px;overflow-y:auto;font-family:monospace;font-size:12px;color:#cdd6f4;white-space:pre-wrap';
-      resultBox.textContent = text;
-      const insertBtn = document.createElement('button');
-      insertBtn.textContent = '插入到对话';
-      insertBtn.style.cssText = 'margin-top:6px;padding:4px 12px;background:#313244;color:#89b4fa;border:1px solid #89b4fa;border-radius:6px;cursor:pointer;font-size:12px';
-      insertBtn.onclick = () => fillAndSend(text, true);
-      card.appendChild(resultBox);
-      card.appendChild(insertBtn);
-      execBtn.textContent = '✅ 已执行';
-    } catch {
-      execBtn.textContent = '❌ 执行失败';
-      execBtn.disabled = false;
-    }
-  };
-
-  skipBtn.onclick = () => {
-    card.remove();
-    detectedToolKeys.delete(key);
-    if (stack && stack.childElementCount === 0) stack.remove();
-  };
-
-  stack.appendChild(card);
-}
-
-function renderToolCard(data: any, _full: string, sourceEl: Element, key: string) {
+function renderToolCard(data: OpenLinkToolCall, _full: string, sourceEl: Element, key: string, processed: Set<string>) {
   // Find stable anchor: message-content's parent, which Angular doesn't rebuild
   const messageContent = sourceEl.closest('message-content') ?? sourceEl.closest('.prose') ?? sourceEl;
   const anchor = messageContent.parentElement ?? sourceEl.parentElement;
@@ -286,35 +176,30 @@ function renderToolCard(data: any, _full: string, sourceEl: Element, key: string
   // Prevent duplicate cards
   if (anchor.querySelector(`[data-openlink-key="${key}"]`)) return;
 
-  const args = data.args && typeof data.args === 'object' ? data.args : {};
-  const rawText = typeof data.raw === 'string' ? data.raw : '';
+  const args = data.args || {};
   const card = document.createElement('div');
   card.setAttribute('data-openlink-key', key);
   card.style.cssText = 'border:1px solid #444;border-radius:8px;padding:12px;margin:8px 0;background:#1e1e2e;color:#cdd6f4;font-size:13px';
 
   const header = document.createElement('div');
   header.style.cssText = 'font-weight:bold;margin-bottom:8px';
-  header.innerHTML = `🔧 ${data.name} <span style="color:#888;font-size:11px">#${data.callId || ''}</span>`;
+  const roundText = data.__openlinkRoundId && data.__openlinkRoundIndex && data.__openlinkRoundTotal
+    ? `<span style="color:#fab387;font-size:11px;margin-right:8px">${data.__openlinkRoundId} ${data.__openlinkRoundIndex}/${data.__openlinkRoundTotal}</span>`
+    : '';
+  header.innerHTML = `${roundText}🔧 ${data.name} <span style="color:#888;font-size:11px">#${data.callId || ''}</span>`;
   card.appendChild(header);
 
   const argsBox = document.createElement('div');
   argsBox.style.cssText = 'margin:8px 0;background:#181825;border-radius:6px;padding:8px';
-  if (Object.keys(args).length > 0) {
-    for (const [k, v] of Object.entries(args)) {
-      const row = document.createElement('div');
-      row.style.cssText = 'margin-bottom:4px';
-      row.innerHTML = `<span style="color:#89b4fa;font-size:11px">${k}</span>`;
-      const val = document.createElement('div');
-      val.style.cssText = 'color:#cdd6f4;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:80px;overflow-y:auto';
-      val.textContent = typeof v === 'string' ? v : JSON.stringify(v);
-      row.appendChild(val);
-      argsBox.appendChild(row);
-    }
-  } else if (rawText) {
-    const rawBox = document.createElement('pre');
-    rawBox.style.cssText = 'margin:0;color:#cdd6f4;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto';
-    rawBox.textContent = rawText;
-    argsBox.appendChild(rawBox);
+  for (const [k, v] of Object.entries(args)) {
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:4px';
+    row.innerHTML = `<span style="color:#89b4fa;font-size:11px">${k}</span>`;
+    const val = document.createElement('div');
+    val.style.cssText = 'color:#cdd6f4;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:80px;overflow-y:auto';
+    val.textContent = typeof v === 'string' ? v : JSON.stringify(v);
+    row.appendChild(val);
+    argsBox.appendChild(row);
   }
   card.appendChild(argsBox);
 
@@ -336,13 +221,14 @@ function renderToolCard(data: any, _full: string, sourceEl: Element, key: string
     markExecuted(key);
     try {
       const text = await executeToolCallRaw(data);
+      const modelText = formatToolResultForModel(data, text);
       const resultBox = document.createElement('div');
       resultBox.style.cssText = 'margin-top:10px;background:#181825;border-radius:6px;padding:8px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:12px;color:#cdd6f4;white-space:pre-wrap';
-      resultBox.textContent = text;
+      resultBox.textContent = modelText;
       const insertBtn = document.createElement('button');
       insertBtn.textContent = '插入到对话';
       insertBtn.style.cssText = 'margin-top:6px;padding:4px 12px;background:#313244;color:#89b4fa;border:1px solid #89b4fa;border-radius:6px;cursor:pointer;font-size:12px';
-      insertBtn.onclick = () => fillAndSend(text, true);
+      insertBtn.onclick = () => fillAndSend(modelText, true);
       card.appendChild(resultBox);
       card.appendChild(insertBtn);
       execBtn.textContent = '✅ 已执行';
@@ -352,32 +238,40 @@ function renderToolCard(data: any, _full: string, sourceEl: Element, key: string
     }
   };
 
-  skipBtn.onclick = () => { card.remove(); detectedToolKeys.delete(key); };
+  skipBtn.onclick = () => { card.remove(); processed.delete(key); };
 
   anchor.insertBefore(card, messageContent);
 }
 
 function startDOMObserver(_responseSelector: string) {
+  const processed = new Set<string>();
+  let autoExecute = false;
+  chrome.storage.local.get(['autoExecute']).then(r => { autoExecute = !!r.autoExecute; });
+  chrome.storage.onChanged.addListener((changes) => {
+    if ('autoExecute' in changes) autoExecute = !!changes.autoExecute.newValue;
+  });
+
   function scanText(text: string, sourceEl?: Element) {
-    if (!text.includes('tool_call') && !text.includes('<tool') && !text.includes('```')) return;
-    const calls = extractToolCallsFromText(text);
+    if (!text.includes('<tool') && !text.includes('tool_call') && !text.includes('```') && !/^\s*name\s*:/m.test(text)) return;
+    const calls = assignRoundMeta(extractToolCallsFromText(text) as OpenLinkToolCall[]);
     for (const data of calls) {
-      const key = getToolKey(data, data.raw);
-      if (detectedToolKeys.has(key)) continue;
-      detectedToolKeys.add(key);
+      const convId = getConversationId();
+      const key = data.callId ? `${convId}:${data.name}:${data.callId}` : String(hashStr(data.raw));
+      if (processed.has(key)) continue;
       console.log('[OpenLink] 提取到工具调用:', data);
-      debugLog('captured tool from DOM', { key, data });
 
       if (sourceEl) {
-        renderToolCard(data, data.raw, sourceEl, key);
+        processed.add(key);
+        renderToolCard(data, data.raw, sourceEl, key, processed);
         if (autoExecute && !isExecuted(key)) {
           markExecuted(key);
-          queueToolExecution(data);
+          window.postMessage({ type: 'TOOL_CALL', data }, '*');
         }
       } else {
         if (isExecuted(key)) continue;
+        processed.add(key);
         markExecuted(key);
-        queueToolExecution(data);
+        window.postMessage({ type: 'TOOL_CALL', data }, '*');
       }
     }
   }
@@ -559,7 +453,7 @@ function showQuestionPopup(question: string, options: string[]): Promise<string>
   });
 }
 
-async function executeToolCall(toolCall: any) {
+async function executeToolCall(toolCall: OpenLinkToolCall) {
   if (toolCall.name === 'question') {
     const q: string = toolCall.args?.question ?? '';
     const rawOpts = toolCall.args?.options;
@@ -579,7 +473,7 @@ async function executeToolCall(toolCall: any) {
     const response = await bgFetch(`${apiUrl}/exec`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(toolCall)
+      body: JSON.stringify(toExecPayload(toolCall))
     });
 
     if (response.status === 401) { fillAndSend('认证失败，请在插件中重新输入 Token', false); return; }
@@ -587,16 +481,17 @@ async function executeToolCall(toolCall: any) {
 
     const result = JSON.parse(response.body);
     const text = result.output || result.error || '[OpenLink] 空响应';
+    const modelText = formatToolResultForModel(toolCall, text);
 
     if (result.stopStream) {
       clickStopButton();
       showToast('✅ 文件已写入成功，已停止生成');
       await new Promise(r => setTimeout(r, 600));
-      fillAndSend(text, true);
+      fillAndSend(modelText, true);
       return;
     }
 
-    fillAndSend(text, true);
+    fillAndSend(modelText, true);
   } catch (error) {
     fillAndSend(`[OpenLink 错误] ${error}`, false);
   }
@@ -959,9 +854,9 @@ function attachInputListener(editorEl: HTMLElement) {
         filtered.map(s => ({
           label: s.name,
           sub: s.description,
-          value: `\`\`\`yaml\ntool_call:\n  name: skill\n  call_id: ${makeCallId()}\n  args:\n    skill: ${s.name}\n\`\`\``,
+          value: `<tool name="skill">\n  <parameter name="skill">${s.name}</parameter>\n</tool>`,
         })),
-        (yaml) => { replaceTokenInEditor(editorEl, token, yaml, fillMethod); dismiss(); },
+        (xml) => { replaceTokenInEditor(editorEl, token, xml, fillMethod); dismiss(); },
         dismiss
       );
       return;
