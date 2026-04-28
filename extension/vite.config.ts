@@ -1,8 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
 import { copyFileSync, mkdirSync, existsSync } from 'fs'
+import { fileURLToPath } from 'url'
 import { build as esbuild } from 'esbuild'
+
+const rootDir = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig(({ mode }) => {
   const manifestFile = mode === 'firefox' ? 'public/manifest.firefox.json' : 'public/manifest.json'
@@ -15,20 +18,20 @@ export default defineConfig(({ mode }) => {
         async closeBundle() {
           await Promise.all([
             esbuild({
-              entryPoints: [resolve(__dirname, 'src/content/index.ts')],
+              entryPoints: [resolve(rootDir, 'src/content/index.ts')],
               bundle: true,
               format: 'iife',
               platform: 'browser',
               target: 'es2020',
-              outfile: resolve(__dirname, 'dist/content.js'),
+              outfile: resolve(rootDir, 'dist/content.js'),
             }),
             esbuild({
-              entryPoints: [resolve(__dirname, 'src/injected/index.ts')],
+              entryPoints: [resolve(rootDir, 'src/injected/index.ts')],
               bundle: true,
               format: 'iife',
               platform: 'browser',
               target: 'es2020',
-              outfile: resolve(__dirname, 'dist/injected.js'),
+              outfile: resolve(rootDir, 'dist/injected.js'),
             }),
           ])
 
@@ -45,8 +48,8 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       rollupOptions: {
         input: {
-          popup: resolve(__dirname, 'src/popup/index.html'),
-          background: resolve(__dirname, 'src/background/index.ts')
+          popup: resolve(rootDir, 'src/popup/index.html'),
+          background: resolve(rootDir, 'src/background/index.ts')
         },
         output: {
           entryFileNames: '[name].js'
