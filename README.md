@@ -8,7 +8,7 @@
 >
 > OpenLink 通过浏览器扩展模拟用户操作来驱动网页 AI，**并不是一个 API 接口**，不适合作为日常 API 调用使用。请合理使用，勿滥用。
 
-让网页版 AI（Gemini、AI Studio）直接访问你的本地文件系统和执行命令。
+让网页版 AI（Gemini、AI Studio、ChatGPT）直接访问你的本地文件系统和执行命令。
 
 ## 工作原理
 
@@ -73,7 +73,7 @@ openlink
 
 ### 第四步：开始使用
 
-访问 [Gemini](https://gemini.google.com) 或 [AI Studio](https://aistudio.google.com)，点击页面右下角的「🔗 初始化」按钮，AI 即可开始使用本地工具。
+访问 [Gemini](https://gemini.google.com)、[AI Studio](https://aistudio.google.com) 或 [ChatGPT](https://chatgpt.com)，点击页面右下角的「🔗 初始化」按钮，AI 即可开始使用本地工具。
 
 ---
 
@@ -91,6 +91,7 @@ openlink
 | ---------------- | ---- | ------------------------ |
 | Google AI Studio | ✅   | 推荐，原生支持系统提示词 |
 | Google Gemini    | ✅   |                          |
+| ChatGPT          | ✅   | 已适配 `chatgpt.com` 输入框与回答区 |
 
 ---
 

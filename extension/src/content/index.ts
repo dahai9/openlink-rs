@@ -37,6 +37,15 @@ function getSiteConfig(): SiteConfig {
   const h = location.hostname;
   if (h.includes('gemini.google.com'))
     return { editor: 'div.ql-editor[contenteditable="true"]', sendBtn: 'button.send-button[aria-label*="发送"], button.send-button[aria-label*="Send"]', stopBtn: null, fillMethod: 'execCommand', useObserver: true, responseSelector: 'model-response, .model-response-text, message-content' };
+  if (h === 'chatgpt.com' || h.endsWith('.chatgpt.com') || h === 'chat.openai.com')
+    return {
+      editor: '#prompt-textarea.ProseMirror, div#prompt-textarea[contenteditable="true"]',
+      sendBtn: 'form[data-type="unified-composer"] button[type="submit"], form[data-type="unified-composer"] button[data-testid="send-button"], form[data-type="unified-composer"] button[aria-label*="Send"], form[data-type="unified-composer"] button[aria-label*="发送"]',
+      stopBtn: 'button[data-testid="stop-button"], button[aria-label*="Stop"], button[aria-label*="停止"]',
+      fillMethod: 'prosemirror',
+      useObserver: true,
+      responseSelector: '[data-message-author-role="assistant"]',
+    };
   // Default: AI Studio
   return { editor: 'textarea[placeholder*="Start typing a prompt"]', sendBtn: 'button.ctrl-enter-submits.ms-button-primary[type="submit"], button[aria-label*="Run"]', stopBtn: null, fillMethod: 'value', useObserver: true, responseSelector: 'ms-chat-turn' };
 }
@@ -89,7 +98,7 @@ function hashStr(s: string): number {
 }
 
 function getConversationId(): string {
-  const m = location.pathname.match(/\/chat\/([^/?#]+)/) || location.search.match(/[?&]id=([^&]+)/);
+  const m = location.pathname.match(/\/(?:chat|c)\/([^/?#]+)/) || location.search.match(/[?&]id=([^&]+)/);
   return m ? m[1] : '__default__';
 }
 
@@ -169,7 +178,7 @@ async function executeToolCallRaw(toolCall: OpenLinkToolCall): Promise<string> {
 
 function renderToolCard(data: OpenLinkToolCall, _full: string, sourceEl: Element, key: string, processed: Set<string>) {
   // Find stable anchor: message-content's parent, which Angular doesn't rebuild
-  const messageContent = sourceEl.closest('message-content') ?? sourceEl.closest('.prose') ?? sourceEl;
+  const messageContent = sourceEl.closest('[data-message-author-role]') ?? sourceEl.closest('message-content') ?? sourceEl.closest('ms-chat-turn') ?? sourceEl.closest('.prose') ?? sourceEl;
   const anchor = messageContent.parentElement ?? sourceEl.parentElement;
   if (!anchor) return;
 
@@ -243,8 +252,9 @@ function renderToolCard(data: OpenLinkToolCall, _full: string, sourceEl: Element
   anchor.insertBefore(card, messageContent);
 }
 
-function startDOMObserver(_responseSelector: string) {
+function startDOMObserver(responseSelector: string) {
   const processed = new Set<string>();
+  const responseSelectors = responseSelector.split(',').map(sel => sel.trim()).filter(Boolean);
   let autoExecute = false;
   chrome.storage.local.get(['autoExecute']).then(r => { autoExecute = !!r.autoExecute; });
   chrome.storage.onChanged.addListener((changes) => {
@@ -293,9 +303,11 @@ function startDOMObserver(_responseSelector: string) {
 
   function findResponseContainer(el: Element | null): Element | null {
     while (el) {
-      const tag = el.tagName.toLowerCase();
-      if (tag === 'message-content') return el;
-      if (tag === 'ms-chat-turn') return el;
+      for (const sel of responseSelectors) {
+        try {
+          if (el.matches(sel)) return el;
+        } catch {}
+      }
       el = el.parentElement;
     }
     return null;
@@ -375,7 +387,7 @@ function startDOMObserver(_responseSelector: string) {
 
   // Initial scan for already-rendered tool calls (e.g. after page refresh)
   requestAnimationFrame(() => {
-    document.querySelectorAll('message-content, ms-chat-turn').forEach(el => {
+    document.querySelectorAll(responseSelectors.join(', ')).forEach(el => {
       scanText(getCleanText(el), el);
     });
   });
@@ -536,7 +548,7 @@ function showCountdownToast(ms: number, onFire: () => void): void {
 }
 
 function querySelectorFirst(selectors: string): HTMLElement | null {
-  for (const sel of selectors.split(',').map(s => s.trim())) {
+  for (const sel of selectors.split(',').map(s => s.trim()).filter(Boolean)) {
     const el = document.querySelector(sel) as HTMLElement | null;
     if (el) return el;
   }
@@ -633,6 +645,16 @@ function insertTextIntoEditable(editor: HTMLElement, text: string): void {
   document.execCommand('insertText', false, text);
 }
 
+function placeCaretAtEnd(editor: HTMLElement): void {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 async function fillAndSend(result: string, autoSend = false) {
   const { editor: editorSel, sendBtn: sendBtnSel, fillMethod } = getSiteConfig();
   const editor = querySelectorFirst(editorSel);
@@ -656,7 +678,8 @@ async function fillAndSend(result: string, autoSend = false) {
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   } else if (fillMethod === 'prosemirror') {
     const current = editor.innerText.trim();
-    editor.innerHTML = current ? current + '\n' + result : result;
+    placeCaretAtEnd(editor);
+    insertTextIntoEditable(editor, current ? `\n${result}` : result);
     editor.dispatchEvent(new Event('input', { bubbles: true }));
     editor.dispatchEvent(new Event('change', { bubbles: true }));
   }
