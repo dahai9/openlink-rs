@@ -542,6 +542,96 @@ function querySelectorFirst(selectors: string): HTMLElement | null {
   return null;
 }
 
+function isFirefox(): boolean {
+  return navigator.userAgent.toLowerCase().includes('firefox');
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function textToEditorHtml(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line ? escapeHtml(line) : '<br>')
+    .join('<br>');
+}
+
+type QuillLike = {
+  deleteText?: (index: number, length: number, source?: string) => void;
+  getLength?: () => number;
+  getSelection?: (focus?: boolean) => { index: number; length: number } | null;
+  insertText?: (index: number, text: string, source?: string) => void;
+  setSelection?: (index: number, length: number, source?: string) => void;
+};
+
+function findQuillInstance(editor: HTMLElement): QuillLike | null {
+  let node: HTMLElement | null = editor;
+  while (node) {
+    const nodeAny = node as any;
+    const quill = nodeAny.__quill ?? nodeAny.wrappedJSObject?.__quill;
+    if (quill && typeof quill.insertText === 'function') return quill;
+    node = node.parentElement;
+  }
+
+  const winAny = window as any;
+  const quillCtor = winAny.Quill ?? winAny.wrappedJSObject?.Quill;
+  const editorForPage = (editor as any).wrappedJSObject ?? editor;
+  const found = quillCtor?.find?.(editorForPage, true);
+  return found && typeof found.insertText === 'function' ? found : null;
+}
+
+function insertWithQuill(editor: HTMLElement, text: string): boolean {
+  const quill = findQuillInstance(editor);
+  if (!quill?.insertText) return false;
+
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const range = quill.getSelection?.(true);
+  const fallbackIndex = Math.max(0, (quill.getLength?.() ?? 1) - 1);
+  const index = range?.index ?? fallbackIndex;
+
+  if (range?.length && quill.deleteText) {
+    quill.deleteText(index, range.length, 'user');
+  }
+  quill.insertText(index, normalized, 'user');
+  quill.setSelection?.(index + normalized.length, 0, 'silent');
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+
+function insertMultilineByParagraph(editor: HTMLElement, text: string): boolean {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  let inserted = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) {
+      inserted = document.execCommand('insertParagraph') || inserted;
+    }
+    if (lines[i]) {
+      inserted = document.execCommand('insertText', false, lines[i]) || inserted;
+    }
+  }
+
+  if (inserted) editor.dispatchEvent(new Event('input', { bubbles: true }));
+  return inserted;
+}
+
+function insertTextIntoEditable(editor: HTMLElement, text: string): void {
+  if (isFirefox() && editor.isContentEditable && text.includes('\n')) {
+    if (editor.classList.contains('ql-editor') && insertWithQuill(editor, text)) return;
+    if (insertMultilineByParagraph(editor, text)) return;
+    if (document.execCommand('insertHTML', false, textToEditorHtml(text))) return;
+  }
+
+  document.execCommand('insertText', false, text);
+}
+
 async function fillAndSend(result: string, autoSend = false) {
   const { editor: editorSel, sendBtn: sendBtnSel, fillMethod } = getSiteConfig();
   const editor = querySelectorFirst(editorSel);
@@ -554,7 +644,7 @@ async function fillAndSend(result: string, autoSend = false) {
     dataTransfer.setData('text/plain', result);
     editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dataTransfer, bubbles: true, cancelable: true }));
   } else if (fillMethod === 'execCommand') {
-    document.execCommand('insertText', false, result);
+    insertTextIntoEditable(editor, result);
   } else if (fillMethod === 'value') {
     const ta = editor as HTMLTextAreaElement;
     const nativeInputValueSetter = getNativeSetter();
@@ -802,7 +892,7 @@ function replaceTokenInEditor(el: HTMLElement, token: string, replacement: strin
       range.setEnd(endNode, endOffset);
       sel.removeAllRanges();
       sel.addRange(range);
-      document.execCommand('insertText', false, replacement);
+      insertTextIntoEditable(el, replacement);
     }
   } else {
     // paste fallback (DeepSeek/Slate)：先删除 token，再粘贴
