@@ -256,13 +256,14 @@ function startDOMObserver(_responseSelector: string) {
     const calls = assignRoundMeta(extractToolCallsFromText(text) as OpenLinkToolCall[]);
     for (const data of calls) {
       const convId = getConversationId();
-      const key = data.callId ? `${convId}:${data.name}:${data.callId}` : String(hashStr(data.raw));
+      const raw = data.raw ?? JSON.stringify(toExecPayload(data));
+      const key = data.callId ? `${convId}:${data.name}:${data.callId}` : String(hashStr(raw));
       if (processed.has(key)) continue;
       console.log('[OpenLink] 提取到工具调用:', data);
 
       if (sourceEl) {
         processed.add(key);
-        renderToolCard(data, data.raw, sourceEl, key, processed);
+        renderToolCard(data, raw, sourceEl, key, processed);
         if (autoExecute && !isExecuted(key)) {
           markExecuted(key);
           window.postMessage({ type: 'TOOL_CALL', data }, '*');
