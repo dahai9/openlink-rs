@@ -4,7 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "vite build --watch --mode development",
-    "build": "vite build",
+    "dev:firefox": "vite build --watch --mode firefox",
+    "build": "npm run build:chrome",
+    "build:chrome": "vite build --mode chrome",
+    "build:firefox": "vite build --mode firefox",
+    "package:firefox": "npm run build:firefox && rm -f openlink-firefox.xpi && (cd dist && (command -v zip >/dev/null 2>&1 && zip -r ../openlink-firefox.xpi . || python3 -m zipfile -c ../openlink-firefox.xpi *))",
     "preview": "vite preview"
   },
   "dependencies": {
