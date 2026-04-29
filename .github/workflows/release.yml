@@ -28,50 +28,61 @@ jobs:
           name: extension
           path: /tmp/extension-*.zip
 
-  build-binary:
+  build-macos:
+    runs-on: macos-latest
     strategy:
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: openlink
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: openlink
-          - target: x86_64-apple-darwin
-            os: macos-13
-            artifact: openlink
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            artifact: openlink.exe
-    runs-on: ${{ matrix.os }}
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }}
-
       - name: Package
-        shell: bash
-        env:
-          WORKSPACE: ${{ github.workspace }}
         run: |
-          mkdir -p "$WORKSPACE/dist"
           cd target/${{ matrix.target }}/release
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a "$WORKSPACE/dist/openlink-${{ matrix.target }}.zip" ${{ matrix.artifact }}
-          else
-            tar czf "$WORKSPACE/dist/openlink-${{ matrix.target }}.tar.gz" ${{ matrix.artifact }}
-          fi
-
+          tar czf ${{ github.workspace }}/openlink-${{ matrix.target }}.tar.gz openlink
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: dist/*
+          path: openlink-${{ matrix.target }}.tar.gz
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Package
+        run: |
+          cd target/x86_64-unknown-linux-gnu/release
+          tar czf ${{ github.workspace }}/openlink-x86_64-unknown-linux-gnu.tar.gz openlink
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-x86_64-unknown-linux-gnu
+          path: openlink-x86_64-unknown-linux-gnu.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: cargo build --release --target x86_64-pc-windows-msvc
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path target/x86_64-pc-windows-msvc/release/openlink.exe -DestinationPath openlink-x86_64-pc-windows-msvc.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-x86_64-pc-windows-msvc
+          path: openlink-x86_64-pc-windows-msvc.zip
 
   release:
-    needs: [build-extension, build-binary]
+    needs: [build-extension, build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
