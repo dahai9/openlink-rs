@@ -2,52 +2,72 @@
 
 ## 环境要求
 
-- Nix with flakes enabled（NixOS 推荐）
-- 或本机安装 Go 1.23+、Node.js 18+
+- Rust 1.85+ (edition 2024)
+- Node.js 18+
 - Chrome 或 Firefox 浏览器
 
 ## 项目结构
 
 ```
 openlink/
-├── cmd/server/          # 服务端入口
-├── internal/
-│   ├── executor/        # 工具执行器
-│   ├── security/        # 沙箱与 Token
-│   ├── server/          # HTTP 服务
-│   └── types/           # 公共类型
-├── prompts/             # 内置初始化提示词
-├── extension/           # 浏览器扩展（Vite + React）
+├── src/
+│   ├── main.rs            # 服务端入口
+│   ├── lib.rs             # 库根模块
+│   ├── config.rs          # 配置与 Token 管理
+│   ├── executor.rs        # 工具执行器
+│   ├── security/
+│   │   ├── auth.rs        # Token 认证中间件
+│   │   └── sandbox.rs     # 路径沙箱与命令过滤
+│   ├── server/
+│   │   ├── mod.rs         # 路由与 AppState
+│   │   └── handlers.rs    # HTTP 处理函数
+│   ├── skill/
+│   │   └── mod.rs         # Skill 加载器
+│   ├── tool/
+│   │   ├── mod.rs         # Tool trait 与 Registry
+│   │   ├── edit.rs        # 字符串替换
+│   │   ├── exec_cmd.rs    # Shell 命令执行
+│   │   ├── glob.rs        # 文件模式匹配
+│   │   ├── grep.rs        # 内容搜索
+│   │   ├── list_dir.rs    # 目录列表
+│   │   ├── read_file.rs   # 文件读取
+│   │   ├── write_file.rs  # 文件写入
+│   │   ├── web_fetch.rs   # 网页抓取
+│   │   ├── skill_tool.rs  # Skill 加载
+│   │   ├── question.rs    # 用户提问
+│   │   ├── todo_write.rs  # 任务列表
+│   │   └── truncate.rs    # 输出截断
+│   └── types/
+│       └── tool_request.rs # API 类型定义
+├── prompts/               # 内置初始化提示词
+├── extension/             # 浏览器扩展（TypeScript）
 │   ├── src/
-│   │   ├── content/     # 内容脚本（工具调用拦截）
-│   │   ├── popup/       # 扩展弹窗 UI
-│   │   └── background/  # Service Worker
-│   └── public/          # manifest.json 等静态资源
-├── install.sh           # Linux/macOS 安装脚本
-├── install.ps1          # Windows 安装脚本
-└── .goreleaser.yml      # 多平台发布配置
+│   │   ├── content/       # 内容脚本（工具调用拦截）
+│   │   ├── popup/         # 扩展弹窗 UI
+│   │   └── background/    # Service Worker
+│   └── public/            # manifest.json 等静态资源
+├── Cargo.toml
+├── install.sh             # Linux/macOS 安装脚本
+└── install.ps1            # Windows 安装脚本
 ```
 
 ## 本地开发
 
-### 使用 Nix 开发环境
-
-```bash
-nix develop
-```
-
-开发壳会提供 `go`、`node`、`npm`、`python3` 和 `zip`，并设置 `GOTOOLCHAIN=local`，避免 Go 自动下载额外 toolchain。
-
 ### 启动服务端
 
 ```bash
-go run cmd/server/main.go -dir=/your/workspace
+cargo run -- --dir=/your/workspace
 ```
 
 ### 构建服务端
 
 ```bash
-go build -o openlink cmd/server/main.go
+# Debug 构建
+cargo build
+
+# Release 构建
+cargo build --release
+./target/release/openlink --dir=/your/workspace --port=39527
 ```
 
 ### 开发扩展
@@ -75,7 +95,7 @@ npm run package:firefox
 ### 运行测试
 
 ```bash
-go test ./...
+cargo test
 ```
 
 ## 发布新版本
@@ -113,4 +133,6 @@ if (h.includes("example.com"))
 
 ## 添加新工具
 
-在 `internal/executor/executor.go` 的 `Execute` 方法中添加新的 `case`，并在 `ListTools()` 中注册工具信息。所有文件路径操作必须通过 `security.SafePath()` 验证。
+1. 在 `src/tool/` 下创建新文件，实现 `Tool` trait（`name()`, `description()`, `parameters()`, `validate()`, `execute()`）
+2. 在 `src/executor.rs` 的 `Executor::new()` 中注册新工具
+3. 所有文件路径操作必须通过 `sandbox::safe_path()` 验证

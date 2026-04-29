@@ -36,3 +36,6 @@ extension/*.crx
 extension/*.pem
 extension/*.xpi
 extension/dist/
+
+/target
+OPTIMIZATION_AUDIT.md
