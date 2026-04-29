@@ -1,4 +1,10 @@
-# OpenLink
+# OpenLink (Rust 重构版)
+
+本项目是 [openlink](https://github.com/afumu/openlink) 的 **Rust 重写版本**，在原项目基础上进行了以下改进：
+
+- **Rust 重构**：服务端从 Go 重写为 Rust (Axum + Tokio)，更轻量、更高效
+- **Firefox 兼容**：浏览器扩展同时支持 Chrome 和 Firefox
+- **ChatGPT 支持**：新增对 [ChatGPT](https://chatgpt.com) 的适配
 
 > ⚠️ **学习研究项目，非生产用途**
 >
@@ -13,29 +19,25 @@
 ## 工作原理
 
 ```
-AI 网页 → 输出 YAML `tool_call` → Chrome 扩展拦截 → 本地 Go 服务执行 → 结果返回 AI
+AI 网页 → 输出 YAML `tool_call` → Chrome 扩展拦截 → 本地 Rust 服务执行 → 结果返回 AI
 ```
 
 ## 快速安装
 
 ### 第一步：安装本地服务
 
-**macOS / Linux**
+从源码构建：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/afumu/openlink/main/install.sh | sh
+git clone https://github.com/afumu/openlink-rs.git
+cd openlink-rs
+cargo build --release
 ```
 
-**Windows（PowerShell）**
-
-```powershell
-irm https://raw.githubusercontent.com/afumu/openlink/main/install.ps1 | iex
-```
-
-安装完成后运行：
+运行：
 
 ```bash
-openlink
+./target/release/openlink
 ```
 
 服务默认监听 `http://127.0.0.1:39527`，启动后会输出认证 URL。
@@ -186,7 +188,7 @@ tool_call:
 ## 安全机制
 
 - **沙箱隔离**：所有文件操作限制在指定工作目录内
-- **危险命令拦截**：`rm -rf`、`sudo`、`curl` 等命令被屏蔽
+- **危险命令拦截**：`rm -rf`、`sudo`、`mkfs` 等危险命令被屏蔽；`curl`/`wget` 允许使用
 - **超时控制**：命令执行默认 60 秒超时
 
 ---
@@ -197,9 +199,9 @@ tool_call:
 openlink [选项]
 
 选项：
-  -dir string    工作目录（默认：当前目录）
-  -port int      监听端口（默认：39527）
-  -timeout int   命令超时秒数（默认：60）
+  --dir <路径>     工作目录（默认：当前目录）
+  --port <端口>    监听端口（默认：39527）
+  --timeout <秒>   命令超时秒数（默认：60）
 ```
 
 ---
@@ -229,6 +231,7 @@ openlink [选项]
 - [opencode](https://github.com/anomalyco/opencode)
 - [MCP-SuperAssistant](https://github.com/srbhptl39/MCP-SuperAssistant)
 - [learn-claude-code](https://github.com/shareAI-lab/learn-claude-code)
+- [openlink](https://github.com/afumu/openlink)
 
 感谢这些项目的作者和贡献者。
 
