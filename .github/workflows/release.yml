@@ -52,24 +52,21 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
+      - name: Package
         run: |
+          mkdir -p dist
           cd target/${{ matrix.target }}/release
-          tar czf /tmp/openlink-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/${{ matrix.artifact }} -DestinationPath C:/tmp/openlink-${{ matrix.target }}.zip
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a ${{ github.workspace }}/dist/openlink-${{ matrix.target }}.zip ${{ matrix.artifact }}
+          else
+            tar czf ${{ github.workspace }}/dist/openlink-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+          fi
+        shell: bash
 
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: |
-            /tmp/openlink-${{ matrix.target }}.tar.gz
-            C:/tmp/openlink-${{ matrix.target }}.zip
+          path: dist/*
 
   release:
     needs: [build-extension, build-binary]
