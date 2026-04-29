@@ -46,7 +46,7 @@ cargo build --release
 
 > Chrome Web Store 版本即将上线，目前请手动安装。
 
-1. 下载最新 [Release](https://github.com/afumu/openlink/releases/latest) 中的 `extension.zip` 并解压
+1. 下载最新 [Release](https://github.com/dahai9/openlink-rs/releases/latest) 中的 `extension.zip` 并解压
 2. 如果你使用 Chrome：
 
 - 打开 `chrome://extensions/`
@@ -214,15 +214,10 @@ openlink [选项]
 
 ## 问题反馈
 
-[提交 Issue](https://github.com/afumu/openlink/issues)
+[提交 Issue](https://github.com/dahai9/openlink-rs/issues) 
 
 ---
 
-## 群交流
-
-加微信：afumudev
-
-备注：openlink
 
 ## 致谢
 
