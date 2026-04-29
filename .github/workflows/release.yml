@@ -53,15 +53,17 @@ jobs:
       - run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
+        shell: bash
+        env:
+          WORKSPACE: ${{ github.workspace }}
         run: |
-          mkdir -p dist
+          mkdir -p "$WORKSPACE/dist"
           cd target/${{ matrix.target }}/release
           if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a ${{ github.workspace }}/dist/openlink-${{ matrix.target }}.zip ${{ matrix.artifact }}
+            7z a "$WORKSPACE/dist/openlink-${{ matrix.target }}.zip" ${{ matrix.artifact }}
           else
-            tar czf ${{ github.workspace }}/dist/openlink-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+            tar czf "$WORKSPACE/dist/openlink-${{ matrix.target }}.tar.gz" ${{ matrix.artifact }}
           fi
-        shell: bash
 
       - uses: actions/upload-artifact@v4
         with:
