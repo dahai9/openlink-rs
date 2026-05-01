@@ -1,31 +1,18 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Result};
 
 /// Joins root_dir + target_path and validates the result stays within root_dir.
 /// target_path must be relative.
 pub fn safe_path(root_dir: &Path, target_path: &str) -> Result<PathBuf> {
-    let abs_root = canonicalize_fallback(root_dir)?;
-    let joined = abs_root.join(target_path);
-    let abs_target = canonicalize_fallback(&joined)?;
+    let abs_root = root_dir.canonicalize()?;
+    let abs_target = resolve_path(abs_root.clone(), Path::new(target_path))?;
 
-    if abs_target != abs_root
-        && !abs_target.starts_with(abs_root.join(""))
-        && abs_target.to_string_lossy() != abs_root.to_string_lossy().trim_end_matches('/')
-    {
-        // Re-check with separator appended
-        let root_with_sep = {
-            let mut s = abs_root.to_string_lossy().to_string();
-            if !s.ends_with(std::path::MAIN_SEPARATOR) {
-                s.push(std::path::MAIN_SEPARATOR);
-            }
-            s
-        };
-        if !abs_target.to_string_lossy().starts_with(&root_with_sep) {
-            bail!("path outside sandbox");
-        }
+    if abs_target.starts_with(&abs_root) {
+        Ok(abs_target)
+    } else {
+        bail!("path outside sandbox")
     }
-    Ok(abs_target)
 }
 
 /// Validates an already-absolute (or ~-prefixed) path against one or more allowed roots.
@@ -42,29 +29,41 @@ pub fn safe_abs_path(target_path: &str, allowed_roots: &[&Path]) -> Result<PathB
         bail!("not an absolute path");
     }
 
-    let abs_target = canonicalize_fallback(&target_path)?;
+    let abs_target = resolve_path(PathBuf::new(), &target_path)?;
 
     for root_dir in allowed_roots {
-        let abs_root = canonicalize_fallback(root_dir)?;
-        let root_with_sep = {
-            let mut s = abs_root.to_string_lossy().to_string();
-            if !s.ends_with(std::path::MAIN_SEPARATOR) {
-                s.push(std::path::MAIN_SEPARATOR);
-            }
-            s
-        };
-        if abs_target.to_string_lossy().starts_with(&root_with_sep)
-            || abs_target == abs_root
-        {
+        let abs_root = root_dir.canonicalize()?;
+        if abs_target.starts_with(&abs_root) {
             return Ok(abs_target);
         }
     }
+
     bail!("path outside sandbox")
 }
 
-fn canonicalize_fallback(path: &Path) -> Result<PathBuf> {
-    path.canonicalize()
-        .or_else(|_| std::path::absolute(path).map_err(Into::into))
+fn resolve_path(mut current: PathBuf, path: &Path) -> Result<PathBuf> {
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !current.pop() {
+                    bail!("path outside sandbox");
+                }
+            }
+            _ => current.push(component.as_os_str()),
+        }
+
+        if current.exists()
+            || current
+                .symlink_metadata()
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false)
+        {
+            current = current.canonicalize()?;
+        }
+    }
+
+    Ok(current)
 }
 
 /// Multi-word dangerous patterns (substring match)
@@ -144,6 +143,16 @@ mod tests {
     }
 
     #[test]
+    fn test_safe_path_traversal_nonexistent_leaf() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let result = safe_path(root, "sub/../../escape.txt");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("sandbox"));
+    }
+
+    #[test]
     fn test_safe_path_subdirectory() {
         let dir = tempdir().unwrap();
         let root = dir.path();
@@ -152,6 +161,43 @@ mod tests {
 
         let result = safe_path(root, "sub/file.txt");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_safe_path_symlink_escape() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let outside = tempdir().unwrap();
+        std::fs::create_dir_all(outside.path()).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), root.join("link")).unwrap();
+
+        #[cfg(unix)]
+        {
+            let result = safe_path(root, "link/new-file.txt");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("sandbox"));
+        }
+    }
+
+    #[test]
+    fn test_safe_abs_path_symlink_escape() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let outside = tempdir().unwrap();
+        std::fs::create_dir_all(outside.path()).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), root.join("link")).unwrap();
+
+        #[cfg(unix)]
+        {
+            let path = root.join("link/new-file.txt");
+            let result = safe_abs_path(path.to_str().unwrap(), &[root]);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("sandbox"));
+        }
     }
 
     #[test]
